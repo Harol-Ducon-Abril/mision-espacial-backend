@@ -14,14 +14,15 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_galactica';
 
 // --- CONFIGURACIÓN CRÍTICA DE CARGA (100MB) ---
+// Esto permite que el servidor reciba archivos Base64 pesados desde el Frontend
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// Configuración de Multer para formularios que no sean JSON
 const upload = multer({ 
-    limits: { fileSize: 100 * 1024 * 1024 } 
+    limits: { fileSize: 100 * 1024 * 1024 } // 100 Megabytes
 });
 
-// Habilitamos CORS para que Vercel pueda conectar
 app.use(cors());
 
 // --- CONFIGURACIÓN DE NODEMAILER ---
@@ -47,11 +48,6 @@ const verificarToken = (req, res, next) => {
         return res.status(401).json({ message: "Sesión expirada o inválida" });
     }
 };
-
-// Ruta raíz para verificar que el backend despertó en Render
-app.get('/', (req, res) => {
-    res.send('🚀 SISTEMA GALÁCTICO OPERATIVO - EL BACKEND ESTÁ VIVO');
-});
 
 // --- 1. AUTENTICACIÓN Y SEGURIDAD ---
 
@@ -171,6 +167,7 @@ app.get('/api/materias', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).send('Error'); }
 });
 
+// --- RUTA DE PROGRESO CORREGIDA (SUMA DE PUNTOS DINÁMICA) ---
 app.get('/api/progreso', verificarToken, async (req, res) => {
     try {
         const query = `
@@ -189,12 +186,12 @@ app.get('/api/progreso', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).send('Error'); }
 });
 
-// --- RUTA ACTUALIZADA: PUNTUACIÓN + HISTORIAL ---
+// --- RUTA DE PUNTAJES (REGISTRO DOBLE: ASTRONAUTA + HISTORIAL) ---
 app.put('/api/puntaje', verificarToken, async (req, res) => {
     try {
-        const { mission_id, subject_id, day_of_week, points, materia_nombre, semana } = req.body;
+        const { mission_id, subject_id, day_of_week, points } = req.body;
         
-        // 1. Actualizar/Insertar en daily_scores (Panel diario)
+        // 1. REGISTRO EN DAILY SCORES
         const existe = await db.query(
             'SELECT id FROM daily_scores WHERE mission_id = $1 AND subject_id = $2 AND day_of_week = $3',
             [mission_id, subject_id, day_of_week]
@@ -209,42 +206,25 @@ app.put('/api/puntaje', verificarToken, async (req, res) => {
             );
         }
 
-        // 2. NUEVO: Registrar en el historial para métricas (si vienen los datos)
-        if (materia_nombre && semana) {
-            await db.query(
-                'INSERT INTO historial_puntos (usuario_id, materia, puntos, semana) VALUES ($1, $2, $3, $4)',
-                [req.user_id, materia_nombre, points, semana]
-            );
-        }
+        // 2. REGISTRO EN HISTORIAL PUNTOS
+        // Obtenemos el nombre de la materia
+        const materiaRes = await db.query('SELECT name FROM subjects WHERE id = $1', [subject_id]);
+        const nombreMateria = materiaRes.rows[0] ? materiaRes.rows[0].name : 'General';
 
-        res.json({ message: "¡Puntaje e Historial registrados!" });
-    } catch (err) { res.status(500).send('Error al guardar puntos'); }
-});
-
-// --- NUEVA RUTA: MÉTRICAS PARA GRÁFICAS ---
-app.get('/api/metricas', verificarToken, async (req, res) => {
-    try {
-        // Obtenemos puntos totales por semana
-        const result = await db.query(
-            'SELECT semana, SUM(puntos) as total FROM historial_puntos WHERE usuario_id = $1 GROUP BY semana ORDER BY semana ASC',
-            [req.user_id]
+        // Insertamos en historial. Mandamos "semana" como 1 para cumplir con tu tabla.
+        await db.query(
+            'INSERT INTO historial_puntos (usuario_id, materia, puntos, fecha, semana) VALUES ($1, $2, $3, NOW(), $4)',
+            [req.user_id, nombreMateria, points, 1]
         );
-        res.json(result.rows);
-    } catch (err) { res.status(500).send('Error al obtener métricas'); }
+
+        res.json({ message: "¡Puntaje registrado en ambas bases!" });
+    } catch (err) { 
+        console.error("Error al guardar puntos:", err);
+        res.status(500).send('Error al guardar puntos'); 
+    }
 });
 
-// --- NUEVA RUTA: DETALLE POR SEMANA (FILTRO) ---
-app.get('/api/metricas/detalle/:semana', verificarToken, async (req, res) => {
-    try {
-        const { semana } = req.params;
-        const result = await db.query(
-            'SELECT materia, SUM(puntos) as puntos FROM historial_puntos WHERE usuario_id = $1 AND semana = $2 GROUP BY materia',
-            [req.user_id, semana]
-        );
-        res.json(result.rows);
-    } catch (err) { res.status(500).send('Error al obtener detalle'); }
-});
-
+// --- RUTA DE PREMIOS (USA UPLOAD.NONE PORQUE RECIBE BASE64 EN EL BODY) ---
 app.post('/api/premios', verificarToken, upload.none(), async (req, res) => {
     try {
         const { prize_1, prize_2, prize_3, prize_max } = req.body;
