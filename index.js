@@ -189,9 +189,12 @@ app.get('/api/progreso', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).send('Error'); }
 });
 
+// --- RUTA ACTUALIZADA: PUNTUACIÓN + HISTORIAL ---
 app.put('/api/puntaje', verificarToken, async (req, res) => {
     try {
-        const { mission_id, subject_id, day_of_week, points } = req.body;
+        const { mission_id, subject_id, day_of_week, points, materia_nombre, semana } = req.body;
+        
+        // 1. Actualizar/Insertar en daily_scores (Panel diario)
         const existe = await db.query(
             'SELECT id FROM daily_scores WHERE mission_id = $1 AND subject_id = $2 AND day_of_week = $3',
             [mission_id, subject_id, day_of_week]
@@ -205,8 +208,41 @@ app.put('/api/puntaje', verificarToken, async (req, res) => {
                 [mission_id, subject_id, day_of_week, points]
             );
         }
-        res.json({ message: "¡Puntaje registrado!" });
+
+        // 2. NUEVO: Registrar en el historial para métricas (si vienen los datos)
+        if (materia_nombre && semana) {
+            await db.query(
+                'INSERT INTO historial_puntos (usuario_id, materia, puntos, semana) VALUES ($1, $2, $3, $4)',
+                [req.user_id, materia_nombre, points, semana]
+            );
+        }
+
+        res.json({ message: "¡Puntaje e Historial registrados!" });
     } catch (err) { res.status(500).send('Error al guardar puntos'); }
+});
+
+// --- NUEVA RUTA: MÉTRICAS PARA GRÁFICAS ---
+app.get('/api/metricas', verificarToken, async (req, res) => {
+    try {
+        // Obtenemos puntos totales por semana
+        const result = await db.query(
+            'SELECT semana, SUM(puntos) as total FROM historial_puntos WHERE usuario_id = $1 GROUP BY semana ORDER BY semana ASC',
+            [req.user_id]
+        );
+        res.json(result.rows);
+    } catch (err) { res.status(500).send('Error al obtener métricas'); }
+});
+
+// --- NUEVA RUTA: DETALLE POR SEMANA (FILTRO) ---
+app.get('/api/metricas/detalle/:semana', verificarToken, async (req, res) => {
+    try {
+        const { semana } = req.params;
+        const result = await db.query(
+            'SELECT materia, SUM(puntos) as puntos FROM historial_puntos WHERE usuario_id = $1 AND semana = $2 GROUP BY materia',
+            [req.user_id, semana]
+        );
+        res.json(result.rows);
+    } catch (err) { res.status(500).send('Error al obtener detalle'); }
 });
 
 app.post('/api/premios', verificarToken, upload.none(), async (req, res) => {
