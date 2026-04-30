@@ -14,18 +14,15 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_galactica';
 
 // --- CONFIGURACIÓN CRÍTICA DE CARGA (100MB) ---
-// Esto permite que el servidor reciba archivos Base64 pesados desde el Frontend
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Configuración de Multer para formularios que no sean JSON
 const upload = multer({ 
-    limits: { fileSize: 100 * 1024 * 1024 } // 100 Megabytes
+    limits: { fileSize: 100 * 1024 * 1024 } 
 });
 
 app.use(cors());
 
-// --- CONFIGURACIÓN DE NODEMAILER ---
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -36,7 +33,6 @@ const transporter = nodemailer.createTransport({
 
 const otpStorage = {}; 
 
-// --- MIDDLEWARE: ADUANA ESPACIAL ---
 const verificarToken = (req, res, next) => {
     const token = req.headers['authorization'];
     if (!token) return res.status(403).json({ message: "No tienes permiso para entrar aquí" });
@@ -167,7 +163,6 @@ app.get('/api/materias', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).send('Error'); }
 });
 
-// --- RUTA DE PROGRESO CORREGIDA (SUMA DE PUNTOS DINÁMICA) ---
 app.get('/api/progreso', verificarToken, async (req, res) => {
     try {
         const query = `
@@ -186,12 +181,12 @@ app.get('/api/progreso', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).send('Error'); }
 });
 
-// --- RUTA DE PUNTAJES (REGISTRO DOBLE: ASTRONAUTA + HISTORIAL) ---
+// --- RUTA DE PUNTAJES (AJUSTADA PARA DOBLE REGISTRO) ---
 app.put('/api/puntaje', verificarToken, async (req, res) => {
     try {
         const { mission_id, subject_id, day_of_week, points } = req.body;
-        
-        // 1. REGISTRO EN DAILY SCORES
+
+        // 1. Registro para el Astronauta (daily_scores)
         const existe = await db.query(
             'SELECT id FROM daily_scores WHERE mission_id = $1 AND subject_id = $2 AND day_of_week = $3',
             [mission_id, subject_id, day_of_week]
@@ -206,25 +201,24 @@ app.put('/api/puntaje', verificarToken, async (req, res) => {
             );
         }
 
-        // 2. REGISTRO EN HISTORIAL PUNTOS
-        // Obtenemos el nombre de la materia
+        // 2. Registro para el Historial/Gráficas (historial_puntos)
+        // Obtenemos el nombre de la materia para guardarlo
         const materiaRes = await db.query('SELECT name FROM subjects WHERE id = $1', [subject_id]);
         const nombreMateria = materiaRes.rows[0] ? materiaRes.rows[0].name : 'General';
 
-        // Insertamos en historial. Mandamos "semana" como 1 para cumplir con tu tabla.
+        // Insertamos en historial_puntos con fecha actual y semana 1
         await db.query(
             'INSERT INTO historial_puntos (usuario_id, materia, puntos, fecha, semana) VALUES ($1, $2, $3, NOW(), $4)',
             [req.user_id, nombreMateria, points, 1]
         );
 
-        res.json({ message: "¡Puntaje registrado en ambas bases!" });
+        res.json({ message: "¡Puntaje registrado exitosamente!" });
     } catch (err) { 
-        console.error("Error al guardar puntos:", err);
+        console.error("Error al procesar puntaje:", err.message);
         res.status(500).send('Error al guardar puntos'); 
     }
 });
 
-// --- RUTA DE PREMIOS (USA UPLOAD.NONE PORQUE RECIBE BASE64 EN EL BODY) ---
 app.post('/api/premios', verificarToken, upload.none(), async (req, res) => {
     try {
         const { prize_1, prize_2, prize_3, prize_max } = req.body;
